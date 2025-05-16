@@ -2,7 +2,7 @@ name: Daily Letterboxd Scraper
 
 on:
   schedule:
-    - cron: "15 3 * * *"  # Run at 03:15 UTC daily
+    - cron: "0 14 * * *"  # Run at 03:15 UTC daily
   workflow_dispatch:      # Allow manual run
 
 jobs:
@@ -24,10 +24,12 @@ jobs:
       - name: Run the scraper
         run: python pop_film_scraper.py
 
-      - name: Commit and push new snapshot
+      - name: Commit and push data
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          export TZ=America/Los_Angeles
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
           git add letterboxd_popular_history.csv
-          git commit -m "Add snapshot for $(date +'%Y-%m-%d')" || echo "No changes to commit"
+          git commit -m "Daily update: $(date '+%Y-%m-%d %H:%M %Z')"
           git push
+
