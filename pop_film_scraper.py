@@ -9,6 +9,9 @@ from bs4 import BeautifulSoup
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
+from datetime import datetime
+from zoneinfo import ZoneInfo  # Only in Python 3.9+
+
 
 BASE_URL = "https://letterboxd.com"
 HEADERS = {
@@ -123,7 +126,8 @@ def save_to_csv(data, filename):
 
 
 def main(genre_url, pages=14):
-    snapshot_date = date.today().isoformat()
+    seattle_time = datetime.now(ZoneInfo("America/Los_Angeles"))
+    snapshot_date = seattle_time.date().isoformat()
     films = scrape_ajax_pages(genre_url, pages)
 
     if not films:
