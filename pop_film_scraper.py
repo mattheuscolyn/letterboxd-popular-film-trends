@@ -59,13 +59,17 @@ def scrape_ajax_pages(base_genre_url, pages):
 
 
 def get_film_details(film_url):
-    """Scrape a film page for details."""
+    """Scrape a film page for details, including film title."""
     response = requests.get(film_url, headers=HEADERS)
     if response.status_code != 200:
         print(f"Failed to fetch {film_url}: {response.status_code}")
         return None
 
     soup = BeautifulSoup(response.text, "html.parser")
+
+    # Extract film title
+    title_tag = soup.select_one("h1.headline-1.primaryname > span.name.js-widont.prettify")
+    film_title = title_tag.text.strip() if title_tag else None
 
     # Extract ratings
     script_tag = soup.select_one("script[type='application/ld+json']")
@@ -105,13 +109,13 @@ def get_film_details(film_url):
         soup.find('meta', attrs={'property': 'og:description'})
     )
 
-    return rating_count, rating_value, genres, runtime, tmdb_type, has_description, poster_url
+    return film_title, rating_count, rating_value, genres, runtime, tmdb_type, has_description, poster_url
 
 
 def save_to_csv(data, filename):
     """Append data to the main CSV file."""
     new_df = pd.DataFrame(data, columns=[
-        "Order", "Film ID", "Film URL", "Rating Count", "Rating Value",
+        "Order", "Film ID", "Film URL", "Film Title", "Rating Count", "Rating Value",
         "Genres", "Runtime", "TMDB Type", "Has Description", "Poster URL", "Snapshot Date"
     ])
 
@@ -146,9 +150,9 @@ def main(genre_url, pages=14):
                     details = future.result()
                     if details is None:
                         continue
-                    rating_count, rating_value, genres, runtime, tmdb_type, has_description, poster_url = details
+                    film_title, rating_count, rating_value, genres, runtime, tmdb_type, has_description, poster_url = details
                     scraped_data.append((
-                        order, film_id, film_url, rating_count, rating_value,
+                        order, film_id, film_url, film_title, rating_count, rating_value,
                         ", ".join(genres), runtime, tmdb_type, has_description,
                         poster_url, snapshot_date
                     ))
@@ -160,6 +164,7 @@ def main(genre_url, pages=14):
         print("\nInterrupted. Saving data scraped so far...")
 
     save_to_csv(scraped_data, "letterboxd_popular_history.csv")
+
 
 
 if __name__ == "__main__":
