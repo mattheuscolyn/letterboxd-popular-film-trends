@@ -23,11 +23,11 @@ MAX_FILMS = 1000
 def get_film_links_from_html(html_content):
     """Extract film links and IDs from the given HTML."""
     soup = BeautifulSoup(html_content, "html.parser")
-    film_items = soup.select("li.poster-container")
+    film_items = soup.select("li.posteritem")
 
     films = []
     for item in film_items:
-        film_div = item.select_one("div.really-lazy-load")
+        film_div = item.select_one("div.react-component")
         if film_div:
             film_id = film_div.get("data-film-id")
             film_slug = film_div.get("data-target-link")
@@ -37,25 +37,106 @@ def get_film_links_from_html(html_content):
     return films
 
 
-def scrape_ajax_pages(base_genre_url, pages):
-    """Scrape AJAX-loaded film pages from a genre/rating URL."""
-    all_films = []
+def scrape_ajax_pages_single_pass(base_genre_url, pages):
+    """Scrape all pages in a single pass, returning films with their page numbers.
+    Returns a dict mapping film_id -> (film_url, earliest_page_number, position_in_page)."""
+    film_data = {}  # film_id -> (film_url, min_page, position)
+    
     for page in range(1, pages + 1):
-        print(f'Scraping page {page}')
+        print(f'  Scraping page {page}')
         ajax_url = f"{base_genre_url}page/{page}/"
         response = requests.get(ajax_url, headers=HEADERS)
         if response.status_code != 200:
-            print(f"Failed to fetch page {page}: {response.status_code}")
+            print(f"  Failed to fetch page {page}: {response.status_code}")
             break
         films_on_page = get_film_links_from_html(response.text)
         if not films_on_page:
-            print(f"No films found on page {page}.")
+            print(f"  No films found on page {page}.")
             break
-        all_films.extend(films_on_page)
-        if len(all_films) >= MAX_FILMS:
-            break
+        
+        # Track each film with its position on this page
+        for position, (film_id, film_url) in enumerate(films_on_page, start=1):
+            if film_id not in film_data:
+                # First time seeing this film - record it
+                film_data[film_id] = (film_url, page, position)
+            else:
+                # Film seen before - keep the earliest page it appeared on
+                existing_url, existing_page, existing_pos = film_data[film_id]
+                if page < existing_page:
+                    film_data[film_id] = (film_url, page, position)
+        
         time.sleep(2)
-    return all_films[:MAX_FILMS]
+    
+    return film_data
+
+
+def scrape_top_films(base_genre_url, pages=14, num_passes=2):
+    """Scrape pages multiple times and compare to identify the top 1000 films.
+    Films that appear consistently in early pages across passes are prioritized.
+    Returns list of (film_id, film_url) tuples ordered by their position."""
+    print(f"Starting {num_passes} passes to identify top {MAX_FILMS} films...")
+    
+    all_passes_data = []
+    
+    for pass_num in range(1, num_passes + 1):
+        print(f"\nPass {pass_num}/{num_passes}:")
+        pass_data = scrape_ajax_pages_single_pass(base_genre_url, pages)
+        all_passes_data.append(pass_data)
+        print(f"  Pass {pass_num} complete: found {len(pass_data)} unique films")
+        
+        if pass_num < num_passes:
+            # Wait a bit between passes to allow rankings to stabilize
+            print("  Waiting 5 seconds before next pass...")
+            time.sleep(5)
+    
+    # Combine data from all passes
+    # For each film, track: earliest page seen, latest page seen, number of passes it appeared in
+    film_scores = {}  # film_id -> (earliest_page, latest_page, num_passes, film_url)
+    
+    for pass_data in all_passes_data:
+        for film_id, (film_url, page, position) in pass_data.items():
+            if film_id not in film_scores:
+                film_scores[film_id] = {
+                    'earliest_page': page,
+                    'latest_page': page,
+                    'num_passes': 1,
+                    'film_url': film_url,
+                    'total_positions': [page]  # track all pages it appeared on
+                }
+            else:
+                score = film_scores[film_id]
+                score['earliest_page'] = min(score['earliest_page'], page)
+                score['latest_page'] = max(score['latest_page'], page)
+                score['num_passes'] += 1
+                score['total_positions'].append(page)
+    
+    # Calculate average page position for each film
+    for film_id, score in film_scores.items():
+        score['avg_page'] = sum(score['total_positions']) / len(score['total_positions'])
+    
+    # Sort films by:
+    # 1. Earliest page they appeared on (primary)
+    # 2. Average page position (secondary)
+    # 3. Number of passes they appeared in (tertiary - prefer films seen in all passes)
+    
+    sorted_films = sorted(
+        film_scores.items(),
+        key=lambda x: (
+            x[1]['earliest_page'],
+            x[1]['avg_page'],
+            -x[1]['num_passes']  # negative because more passes = better
+        )
+    )
+    
+    # Take top MAX_FILMS
+    top_films = sorted_films[:MAX_FILMS]
+    
+    print(f"\nIdentified top {len(top_films)} films:")
+    print(f"  Films appearing in all {num_passes} passes: {sum(1 for _, s in top_films if s['num_passes'] == num_passes)}")
+    print(f"  Films appearing in {num_passes-1} passes: {sum(1 for _, s in top_films if s['num_passes'] == num_passes-1)}")
+    
+    # Return as list of (film_id, film_url) tuples
+    return [(film_id, score['film_url']) for film_id, score in top_films]
 
 
 def get_film_details(film_url):
@@ -113,26 +194,39 @@ def get_film_details(film_url):
 
 
 def save_to_csv(data, filename):
-    """Append data to the main CSV file."""
+    """Append data to the main CSV file, ensuring no duplicate Film IDs per snapshot date."""
     new_df = pd.DataFrame(data, columns=[
         "Order", "Film ID", "Film URL", "Film Title", "Rating Count", "Rating Value",
         "Genres", "Runtime", "TMDB Type", "Has Description", "Poster URL", "Snapshot Date"
     ])
+    
+    # Deduplicate within the new data by keeping first occurrence of each Film ID per snapshot date
+    new_df = new_df.drop_duplicates(subset=['Film ID', 'Snapshot Date'], keep='first')
+    print(f"New data: {len(data)} rows -> {len(new_df)} unique rows after deduplication")
 
     if os.path.exists(filename):
         existing_df = pd.read_csv(filename)
+        # Also deduplicate existing data to clean up any historical duplicates
+        existing_df = existing_df.drop_duplicates(subset=['Film ID', 'Snapshot Date'], keep='first')
         combined_df = pd.concat([existing_df, new_df], ignore_index=True)
     else:
         combined_df = new_df
 
     combined_df.to_csv(filename, index=False)
-    print(f"Data saved to {filename}")
+    
+    # Report on uniqueness for the latest snapshot
+    if len(new_df) > 0:
+        snapshot_date = new_df['Snapshot Date'].iloc[0]
+        snapshot_df = combined_df[combined_df['Snapshot Date'] == snapshot_date]
+        unique_count = snapshot_df['Film ID'].nunique()
+        print(f"Data saved to {filename}")
+        print(f"Snapshot {snapshot_date}: {len(snapshot_df)} total rows, {unique_count} unique Film IDs")
 
 
-def main(genre_url, pages=14):
+def main(genre_url, pages=14, num_passes=2):
     seattle_time = datetime.now(ZoneInfo("America/Los_Angeles"))
     snapshot_date = seattle_time.date().isoformat()
-    films = scrape_ajax_pages(genre_url, pages)
+    films = scrape_top_films(genre_url, pages, num_passes)
 
     if not films:
         print("No films found. Exiting.")
@@ -169,4 +263,4 @@ def main(genre_url, pages=14):
 
 if __name__ == "__main__":
     genre_url = "https://letterboxd.com/films/ajax/popular/this/week/"
-    main(genre_url, pages=14)
+    main(genre_url, pages=14, num_passes=2)
