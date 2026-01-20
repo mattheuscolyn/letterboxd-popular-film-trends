@@ -18,6 +18,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
 }
 MAX_FILMS = 1000
+MAX_PAGES = 14  # Hard limit: never scrape more than 14 pages
 
 
 def get_film_links_from_html(html_content):
@@ -39,7 +40,10 @@ def get_film_links_from_html(html_content):
 
 def scrape_ajax_pages_single_pass(base_genre_url, pages):
     """Scrape all pages in a single pass, returning films with their page numbers.
-    Returns a dict mapping film_id -> (film_url, earliest_page_number, position_in_page)."""
+    Returns a dict mapping film_id -> (film_url, earliest_page_number, position_in_page).
+    Never exceeds MAX_PAGES pages."""
+    # Enforce hard limit of 14 pages
+    pages = min(pages, MAX_PAGES)
     film_data = {}  # film_id -> (film_url, min_page, position)
     
     for page in range(1, pages + 1):
@@ -73,8 +77,11 @@ def scrape_ajax_pages_single_pass(base_genre_url, pages):
 def scrape_top_films(base_genre_url, pages=14, num_passes=2):
     """Scrape pages multiple times and compare to identify the top 1000 films.
     Films that appear consistently in early pages across passes are prioritized.
-    Returns list of (film_id, film_url) tuples ordered by their position."""
-    print(f"Starting {num_passes} passes to identify top {MAX_FILMS} films...")
+    Returns list of (film_id, film_url) tuples ordered by their position.
+    Never exceeds MAX_PAGES pages."""
+    # Enforce hard limit of 14 pages
+    pages = min(pages, MAX_PAGES)
+    print(f"Starting {num_passes} passes to identify top {MAX_FILMS} films (max {pages} pages per pass)...")
     
     all_passes_data = []
     
@@ -224,6 +231,8 @@ def save_to_csv(data, filename):
 
 
 def main(genre_url, pages=14, num_passes=2):
+    # Enforce hard limit of 14 pages
+    pages = min(pages, MAX_PAGES)
     seattle_time = datetime.now(ZoneInfo("America/Los_Angeles"))
     snapshot_date = seattle_time.date().isoformat()
     films = scrape_top_films(genre_url, pages, num_passes)
@@ -263,4 +272,4 @@ def main(genre_url, pages=14, num_passes=2):
 
 if __name__ == "__main__":
     genre_url = "https://letterboxd.com/films/ajax/popular/this/week/"
-    main(genre_url, pages=14, num_passes=2)
+    main(genre_url, pages=MAX_PAGES, num_passes=2)

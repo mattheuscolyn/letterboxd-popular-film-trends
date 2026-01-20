@@ -2,3 +2,6 @@ requests
 beautifulsoup4
 tqdm
 pandas
+matplotlib
+seaborn
+numpy
